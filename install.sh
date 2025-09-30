@@ -11,14 +11,12 @@ INSTALL_DIR="/opt/sentinel-ark-grafana"
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
-NC='\033[0m' # Sem Cor
+NC='\033[0m'
 
 # Função para executar e verificar cada passo com feedback visual
 run_step() {
     echo -e "\n${YELLOW}>>> $1...${NC}"
-    # O 'shift' remove o primeiro argumento (a mensagem) e deixa apenas o comando
     shift
-    # O 'eval' garante que comandos complexos com pipes e aspas funcionem
     if eval "$@"; then
         echo -e "${GREEN}✅ Sucesso!${NC}"
     else
@@ -61,8 +59,10 @@ fi
 
 PG_HBA_CONF=$(sudo -u postgres psql -t -P format=unaligned -c 'SHOW hba_file;')
 if sudo grep -q "local.*all.*all.*peer" "$PG_HBA_CONF"; then
-    run_step "Corrigindo autenticação do PostgreSQL (peer -> md5)" \
+    run_step "Passo 3/6: Corrigindo autenticação do PostgreSQL (peer -> md5)" \
     "sudo sed -i 's/local   all             all                                     peer/local   all             all                                     md5/g' '$PG_HBA_CONF' && sudo systemctl restart postgresql"
+else
+    echo -e "\n${GREEN}>>> Passo 3/6: Verificação de autenticação do PostgreSQL... ✅ Sucesso! (Já está correto).${NC}"
 fi
 
 DB_PASSWORD=$(openssl rand -base64 12)
