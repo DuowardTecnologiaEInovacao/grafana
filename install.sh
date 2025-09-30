@@ -26,7 +26,7 @@ run_step() {
 }
 
 echo -e "${GREEN}=====================================================${NC}"
-echo -e "${GREEN}🚀 Iniciando Instalação Profissional do Sentinel Ark 🚀${NC}"
+echo -e "${GREEN}🚀 Iniciando Instalação do Sentinel Ark 🚀${NC}"
 echo -e "${GREEN}=====================================================${NC}"
 
 # --- PASSO 1: DEPENDÊNCIAS DO SISTEMA ---
