@@ -1,4 +1,4 @@
-[#!/bin/bash
+#!/bin/bash
 # Aborta o script imediatamente se qualquer comando falhar
 set -e
 
@@ -84,7 +84,6 @@ DB_PASSWORD=$(openssl rand -base64 12)
 run_step "Passo 4/6: Preparando o banco de dados" "setup_database"
 
 # --- PASSO 5: INSTALAR O GRAFANA ---
-# Usamos a função run_step para o curl também
 run_step "Passo 5/6a: Buscando a URL da última release" \
 'DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/$REPO/releases/latest" | grep "browser_download_url" | grep ".tar.gz" | head -n 1 | cut -d '"'"'"' -f 4)'
 
@@ -121,4 +120,4 @@ echo -e "A senha para o usuário '${DB_USER}' do banco foi salva em: ${YELLOW}${
 echo "Para visualizá-la, use o comando: sudo cat ${PASSWORD_FILE}"
 echo ""
 echo "Para iniciar o servidor, execute:"
-echo -e "${GREEN}sudo $INSTALL_DIR/bin/grafana server --homepath $INSTALL_DIR${NC}"]
+echo -e "${GREEN}sudo $INSTALL_DIR/bin/grafana server --homepath $INSTALL_DIR${NC}"
