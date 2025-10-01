@@ -31,7 +31,7 @@ trap cleanup EXIT
 # INÍCIO DO SCRIPT
 exec > >(tee -a "$LOG_FILE") 2>&1
 log "====================================================="
-log "🚀 Iniciando Instalação Otimizada do Sentinel Ark 🚀"
+log "🚀 Iniciando Instalação Do Sentinel Ark 🚀"
 log "====================================================="
 
 log "Passo 1/7: Verificações iniciais..."
