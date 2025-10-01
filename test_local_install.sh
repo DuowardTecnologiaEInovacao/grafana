@@ -1,83 +1,87 @@
 #!/bin/bash
-# Aborta o script imediatamente se qualquer comando falhar
-set -e
+# Script de Instalação Otimizado para Sentinel Ark Grafana
 
-# --- CONFIGURAÇÃO ---
-PACKAGE_PATH="dist/sentinel-ark-grafana-v1.2.tar.gz"
-TEST_INSTALL_DIR="/tmp/grafana-local-test"
-DB_NAME="grafana_test"
-DB_USER="grafana_test"
-# --------------------
+# CONFIGURAÇÃO
+# -----------------------------------------------------------------------------
+set -euo pipefail # Para o script em qualquer erro (mais seguro)
+PACKAGE_PATH="dist/sentinel-ark-grafana-v1.2.tar.gz" # Usa o pacote local
+INSTALL_DIR="/opt/sentinel-ark-grafana"
+DB_NAME="grafana"
+DB_USER="grafana"
+LOG_FILE="/var/log/sentinel-ark-install-$(date +%F).log"
 
-# Cores
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
+# CORES E FUNÇÕES DE LOG
+# -----------------------------------------------------------------------------
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
+log() { echo -e "${GREEN}[INFO]${NC} $1"; }
+warn() { echo -e "${YELLOW}[AVISO]${NC} $1"; }
+error() { echo -e "${RED}[ERRO]${NC} $1"; exit 1; }
 
-echo -e "${YELLOW}--- Iniciando Teste de Instalação Local (Versão Profissional) ---${NC}"
-
-# --- PASSO 1: DEPENDÊNCIAS ---
-echo -e "\n${YELLOW}>>> Verificando dependências...${NC}"
-sudo apt-get update -qq
-if ! command -v psql &> /dev/null; then
-    echo "PostgreSQL não encontrado. Instalando..."
-    sudo apt-get install -y postgresql
-else
-    echo "PostgreSQL já está instalado."
-fi
-
-# --- PASSO 2: VERIFICAÇÃO E LIMPEZA DO BANCO DE DADOS ---
-DB_EXISTS=$(sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw "$DB_NAME" && echo "true" || echo "false")
-USER_EXISTS=$(sudo -u postgres psql -c '\du' | cut -d \| -f 1 | grep -qw "$DB_USER" && echo "true" || echo "false")
-
-if [ "$DB_EXISTS" = "true" ] || [ "$USER_EXISTS" = "true" ]; then
-    echo -e "\n${RED}AVISO: O banco de dados '$DB_NAME' e/ou o usuário '$DB_USER' já existem.${NC}"
-    read -p "Você deseja apagá-los e recriá-los do zero? (s/n): " CONFIRM
-    if [[ "$CONFIRM" == "s" || "$CONFIRM" == "S" ]]; then
-        echo "Removendo banco de dados e usuário antigos..."
-        sudo -u postgres psql -c "DROP DATABASE IF EXISTS $DB_NAME;"
-        sudo -u postgres psql -c "DROP USER IF EXISTS $DB_USER;"
-    else
-        echo "Instalação cancelada pelo usuário."
-        exit 1
+# FUNÇÃO DE LIMPEZA EM CASO DE ERRO (ROLLBACK)
+# -----------------------------------------------------------------------------
+cleanup() {
+    if [ $? -ne 0 ]; then
+        error "A instalação falhou. Revertendo alterações..."
+        sudo systemctl stop sentinel-ark.service 2>/dev/null || true
+        sudo systemctl disable sentinel-ark.service 2>/dev/null || true
+        sudo rm -f /etc/systemd/system/sentinel-ark.service 2>/dev/null || true
+        sudo rm -rf "$INSTALL_DIR" 2>/dev/null || true
+        warn "Rollback concluído. O sistema foi restaurado ao estado anterior."
     fi
-fi
+}
+trap cleanup EXIT
 
-# --- PASSO 3: CORREÇÃO AUTOMÁTICA DO POSTGRESQL (pg_hba.conf) ---
-echo -e "\n${YELLOW}>>> Verificando e corrigindo a configuração de autenticação do PostgreSQL...${NC}"
+# INÍCIO DO SCRIPT
+# -----------------------------------------------------------------------------
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+log "====================================================="
+log "🚀 Iniciando Instalação Otimizada do Sentinel Ark 🚀"
+log "====================================================="
+
+# --- VERIFICAÇÕES INICIAIS ---
+log "Passo 1/7: Verificações iniciais..."
+if [ "$EUID" -ne 0 ]; then error "Este script precisa ser executado com sudo."; fi
+if [ ! -f "$PACKAGE_PATH" ]; then error "Pacote de instalação '$PACKAGE_PATH' não encontrado. Execute 'make build' e o empacotamento primeiro."; fi
+
+# --- DEPENDÊNCIAS ---
+log "Passo 2/7: Instalando dependências (postgresql, etc.)..."
+sudo apt-get update -qq
+sudo apt-get install -y wget ca-certificates curl postgresql openssl
+
+# --- CONFIGURAÇÃO DO POSTGRESQL ---
+log "Passo 3/7: Configurando o PostgreSQL..."
 PG_HBA_CONF=$(sudo -u postgres psql -t -P format=unaligned -c 'SHOW hba_file;')
-
-# Verifica se a configuração já está correta (md5), se não, corrige
 if sudo grep -q "local.*all.*all.*peer" "$PG_HBA_CONF"; then
-    echo "Alterando método de autenticação de 'peer' para 'md5'..."
-    sudo sed -i 's/local.*all.*all.*peer/local   all             all                                     md5/g' "$PG_HBA_CONF"
+    log "  - Corrigindo método de autenticação para 'md5'..."
+    sudo sed -i -E 's/^(local\s+all\s+all\s+)peer$/\1md5/' "$PG_HBA_CONF"
     sudo systemctl restart postgresql
-    echo "Serviço do PostgreSQL reiniciado."
 else
-    echo "Método de autenticação já está correto."
+    log "  - Método de autenticação já está correto."
 fi
 
-# --- PASSO 4: CRIAR BANCO DE DADOS, USUÁRIO E SENHA ---
-echo -e "\n${YELLOW}>>> Configurando novo banco de dados e usuário...${NC}"
-DB_PASSWORD=$(openssl rand -base64 12)
+# --- PREPARAÇÃO DO BANCO DE DADOS ---
+log "Passo 4/7: Preparando o banco de dados..."
+DB_PASSWORD=$(openssl rand -base64 16)
+sudo -u postgres psql -c "DROP DATABASE IF EXISTS ${DB_NAME};"
+sudo -u postgres psql -c "DROP USER IF EXISTS ${DB_USER};"
+sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME};"
+sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH ENCRYPTED PASSWORD '${DB_PASSWORD}';"
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};"
+# ===== A CORREÇÃO FINAL ESTÁ AQUI =====
+sudo -u postgres psql -d "${DB_NAME}" -c "GRANT ALL ON SCHEMA public TO ${DB_USER};"
+# ======================================
 
-sudo -u postgres psql -c "CREATE DATABASE $DB_NAME;"
-sudo -u postgres psql -c "CREATE USER $DB_USER WITH ENCRYPTED PASSWORD '$DB_PASSWORD';"
-sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
-sudo -u postgres psql -d "$DB_NAME" -c "GRANT ALL ON SCHEMA public TO $DB_USER;"
+# --- INSTALAÇÃO DO GRAFANA ---
+log "Passo 5/7: Instalando Sentinel Ark do pacote local..."
+sudo rm -rf "$INSTALL_DIR"
+sudo mkdir -p "$INSTALL_DIR"
+sudo tar -xzf "$PACKAGE_PATH" -C "$INSTALL_DIR" --strip-components=1
 
-# --- PASSO 5: INSTALAR O GRAFANA ---
-echo -e "\n${YELLOW}>>> Instalando Grafana do pacote local...${NC}"
-sudo rm -rf "$TEST_INSTALL_DIR"
-sudo mkdir -p "$TEST_INSTALL_DIR"
-sudo tar -xzf "$PACKAGE_PATH" -C "$TEST_INSTALL_DIR" --strip-components=1
-
-# --- PASSO 6: CONFIGURAR O GRAFANA ---
-echo -e "\n${YELLOW}>>> Configurando a conexão com o banco de dados...${NC}"
-CONFIG_FILE="$TEST_INSTALL_DIR/conf/custom.ini"
-PASSWORD_FILE="$TEST_INSTALL_DIR/conf/.pgpass"
-
+# --- CONFIGURAÇÃO DO GRAFANA ---
+log "Passo 6/7: Configurando a conexão com o banco de dados..."
+CONFIG_FILE="$INSTALL_DIR/conf/custom.ini"
+PASSWORD_FILE="$INSTALL_DIR/conf/.pgpass"
 sudo tee "$CONFIG_FILE" > /dev/null <<EOL
 [database]
 type = postgres
@@ -87,17 +91,38 @@ user = ${DB_USER}
 password = ${DB_PASSWORD}
 ssl_mode = disable
 EOL
-
 echo "$DB_PASSWORD" | sudo tee "$PASSWORD_FILE" > /dev/null
-sudo chmod 640 "$PASSWORD_FILE"
-if ! id "grafana" &>/dev/null; then sudo useradd -rs /bin/false grafana; fi
-sudo chown -R grafana:grafana "$TEST_INSTALL_DIR"
+sudo chmod 600 "$PASSWORD_FILE"
+(id 'grafana' &>/dev/null || sudo useradd -rs /bin/false grafana)
+sudo chown -R grafana:grafana "$INSTALL_DIR"
+
+# --- CRIAÇÃO DO SERVIÇO SYSTEMD ---
+log "Passo 7/7: Criando e habilitando o serviço 'sentinel-ark.service'..."
+cat <<EOF | sudo tee /etc/systemd/system/sentinel-ark.service
+[Unit]
+Description=Sentinel Ark Grafana Service
+Wants=network-online.target postgresql.service
+After=network-online.target postgresql.service
+
+[Service]
+User=grafana
+Group=grafana
+Type=simple
+ExecStart=$INSTALL_DIR/bin/grafana server --homepath $INSTALL_DIR
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable sentinel-ark.service
+sudo systemctl start sentinel-ark.service
 
 # --- FINALIZAÇÃO ---
-echo ""
-echo -e "${GREEN}✅ Ambiente de teste local criado com sucesso!${NC}"
-echo "A senha para o usuário '${DB_USER}' do banco de teste é: ${YELLOW}${DB_PASSWORD}${NC}"
-echo -e "Ela também foi salva em: ${YELLOW}${PASSWORD_FILE}${NC}"
-echo ""
-echo "Para iniciar o servidor de teste, execute:"
-echo -e "${GREEN}sudo $TEST_INSTALL_DIR/bin/grafana server --homepath $TEST_INSTALL_DIR${NC}"
+log "======================================================="
+log "✅ Instalação concluída com sucesso! ✅"
+log "======================================================="
+log "A senha para o usuário '${DB_USER}' do banco foi salva em: ${YELLOW}${PASSWORD_FILE}${NC}"
+log "Para verificar o status do serviço, use: ${YELLOW}sudo systemctl status sentinel-ark.service${NC}"
+log "Acesse seu Grafana em: http://$(hostname -I | awk '{print $1'}):3000"
